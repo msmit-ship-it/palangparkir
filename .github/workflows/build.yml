@@ -1,0 +1,51 @@
+name: Build MSM Pay Station Windows
+
+on:
+  push:
+    branches: [ "msm-pay-station-build" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore src/MSM.PayStation.csproj
+
+      - name: Publish portable single EXE
+        run: dotnet publish src/MSM.PayStation.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -o publish
+
+      - name: Add portable files
+        shell: pwsh
+        run: |
+          Copy-Item config.ini publish/config.ini
+          Copy-Item README.txt publish/README.txt
+          New-Item -ItemType Directory -Force publish/sounds | Out-Null
+          Copy-Item sounds/README.txt publish/sounds/README.txt
+          New-Item -ItemType Directory -Force publish/logs | Out-Null
+
+      - name: EXE self test
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "publish/MSM_PAY_STATION.exe" -ArgumentList "--selftest", "SELFTEST.txt" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Selftest exit code $($p.ExitCode)" }
+          Get-Content SELFTEST.txt
+          if (-not (Select-String -Path SELFTEST.txt -Pattern "SELFTEST=PASS" -Quiet)) { throw "Selftest failed" }
+          Copy-Item SELFTEST.txt publish/SELFTEST.txt
+          Get-FileHash publish/MSM_PAY_STATION.exe -Algorithm SHA256 | Format-List | Out-File publish/SHA256.txt
+          Get-Item publish/MSM_PAY_STATION.exe | Select-Object Name,Length,LastWriteTime | Format-List | Out-File -Append publish/SHA256.txt
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MSM_PAY_STATION_v1.0.0_PORTABLE
+          path: publish/**
+          if-no-files-found: error
